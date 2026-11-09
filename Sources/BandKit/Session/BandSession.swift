@@ -14,10 +14,16 @@ public actor BandSession {
         /// A half-received frame older than this is discarded when new data arrives.
         public var staleFrame: TimeInterval
 
-        public init(reply: TimeInterval = 8, bonding: TimeInterval = 60, staleFrame: TimeInterval = 3) {
+        /// How long to wait when asking an unpaired band for its own address. Bands that will not
+        /// say simply stay silent, so this is kept short.
+        public var addressProbe: TimeInterval
+
+        public init(reply: TimeInterval = 8, bonding: TimeInterval = 60, staleFrame: TimeInterval = 3,
+                    addressProbe: TimeInterval = 2.5) {
             self.reply = reply
             self.bonding = bonding
             self.staleFrame = staleFrame
+            self.addressProbe = addressProbe
         }
     }
 
@@ -32,6 +38,9 @@ public actor BandSession {
         public var link: LinkParameters
         public var bond: BondOutcome
         public var device: DeviceInfo
+        /// The band's address used for a new bond: the one supplied, or the one the band reported
+        /// when none was. Nil when the band already knew this phone.
+        public var deviceAddress: BandAddress?
     }
 
     static let resultTag: UInt8 = 0x7f
@@ -273,9 +282,13 @@ public actor BandSession {
 
     /// Runs the whole handshake and leaves the link ready for encrypted commands.
     ///
-    /// If the band does not know this phone yet, `identity.deviceAddress` must be set, and the
-    /// band may ask its wearer to confirm the pairing on its screen.
-    public func open(identity: PairingIdentity) async throws -> OpenResult {
+    /// If the band does not know this phone yet, its Bluetooth address is needed. When
+    /// `identity.deviceAddress` is nil the band is asked for it; if it will not say, this throws
+    /// `BandError.deviceAddressRequired` and the caller should ask the user. The band may also ask
+    /// its wearer to confirm the pairing on its screen.
+    ///
+    /// - Parameter nameHint: the band's advertised name, used to sanity-check a reported address.
+    public func open(identity: PairingIdentity, nameHint: String? = nil) async throws -> OpenResult {
         start()
         linkKey = nil
 
@@ -295,14 +308,20 @@ public actor BandSession {
         if let frameSize = parameters.frameSize, frameSize >= 32 { sliceSize = min(sliceSize, frameSize) }
 
         let outcome: BondOutcome
+        var bondedAddress: BandAddress?
         if parameters.bonded {
             outcome = .existing
             logger.log(.info, "Band recognises this phone")
         } else {
-            guard let address = identity.deviceAddress else { throw BandError.deviceAddressRequired }
+            var address = identity.deviceAddress
+            if address == nil {
+                address = await reportedAddress(nameHint: nameHint)
+            }
+            guard let address else { throw BandError.deviceAddressRequired }
             logger.log(.info, "Band does not know this phone; sending pairing request")
             try await bond(identity, address: address, authVersion: link.authVersion)
             outcome = .created
+            bondedAddress = address
         }
         linkKey = identity.linkKey
 
@@ -322,7 +341,26 @@ public actor BandSession {
             }
         }
         logger.log(.info, "Paired with \(device.model ?? "band"), firmware \(device.softwareVersion ?? "unknown")")
-        return OpenResult(link: link, bond: outcome, device: device)
+        return OpenResult(link: link, bond: outcome, device: device, deviceAddress: bondedAddress)
+    }
+
+    /// Asks a band that is not yet paired for its own Bluetooth address.
+    ///
+    /// iOS hides the address, so this is the only way to get it without the user typing it in.
+    /// Not every band answers before pairing; one that stays silent costs a short wait and nothing
+    /// else. An address that contradicts the band's advertised name is not trusted.
+    private func reportedAddress(nameHint: String?) async -> BandAddress? {
+        guard let reply = try? await query(0x01, 0x07, TLV().adding(0x05), encrypted: false, timeout: timing.addressProbe),
+              let text = reply.string(0x05), let address = BandAddress(text) else {
+            logger.log(.info, "Band did not report its address before pairing")
+            return nil
+        }
+        if let nameHint, !AddressGuess.matches(address, name: nameHint) {
+            logger.log(.warning, "Band reported an address that does not match its name; ignoring it")
+            return nil
+        }
+        logger.log(.info, "Band reported its address")
+        return address
     }
 
     private func requestLinkParameters() async throws -> LinkParameters {

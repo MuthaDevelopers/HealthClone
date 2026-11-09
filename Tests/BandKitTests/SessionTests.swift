@@ -3,7 +3,7 @@ import XCTest
 
 /// Drives the real session code against `SimulatedBand`.
 final class SessionTests: XCTestCase {
-    private let fastTiming = BandSession.Timing(reply: 0.4, bonding: 0.6, staleFrame: 3)
+    private let fastTiming = BandSession.Timing(reply: 0.4, bonding: 0.6, staleFrame: 3, addressProbe: 0.2)
 
     private func makeIdentity(address: String? = "6C:B7:49:12:34:56") -> PairingIdentity {
         PairingIdentity.generate(deviceAddress: address.flatMap(BandAddress.init))
@@ -115,6 +115,37 @@ final class SessionTests: XCTestCase {
             try await BandSession(transport: band, timing: fastTiming).open(identity: makeIdentity(address: nil))
         }
         XCTAssertTrue(band.requests(service: 0x01, command: 0x0e).isEmpty)
+    }
+
+    func testAddressIsLearnedFromTheBandWhenItOffersIt() async throws {
+        let band = SimulatedBand()
+        band.reportsAddressBeforePairing = true
+        let identity = makeIdentity(address: nil)
+        let opened = try await BandSession(transport: band, timing: fastTiming).open(identity: identity, nameHint: "HONOR Band 4-456")
+        XCTAssertEqual(opened.bond, .created)
+        XCTAssertEqual(opened.deviceAddress, band.address, "the caller is told which address was used so it can remember it")
+        XCTAssertEqual(band.knownClients[identity.clientSerial], identity.linkKey)
+    }
+
+    func testReportedAddressThatContradictsTheNameIsNotTrusted() async {
+        let band = SimulatedBand()
+        band.reportsAddressBeforePairing = true
+        await assertThrows(.deviceAddressRequired) {
+            try await BandSession(transport: band, timing: fastTiming).open(identity: makeIdentity(address: nil), nameHint: "HONOR Band 4-999")
+        }
+        XCTAssertTrue(band.requests(service: 0x01, command: 0x0e).isEmpty, "no pairing attempt with a doubtful address")
+    }
+
+    func testSuppliedAddressIsReturnedAndExistingBondReturnsNone() async throws {
+        let band = SimulatedBand()
+        let identity = makeIdentity()
+        let created = try await BandSession(transport: band, timing: fastTiming).open(identity: identity)
+        XCTAssertEqual(created.deviceAddress, band.address)
+
+        let returning = SimulatedBand()
+        returning.remember(identity)
+        let existing = try await BandSession(transport: returning, timing: fastTiming).open(identity: identity)
+        XCTAssertNil(existing.deviceAddress)
     }
 
     func testNewerDevicesAreRefusedClearly() async {

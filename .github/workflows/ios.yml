@@ -1,0 +1,140 @@
+name: iOS app
+
+# Builds the app, opens every screen in the simulator with demo data to catch crashes, and
+# produces an unsigned .ipa that can be signed and installed with a sideloading tool.
+on:
+  push:
+    paths:
+      - "App/**"
+      - "Sources/**"
+      - "Package.swift"
+      - "BandCompanion.xcodeproj/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+    inputs:
+      update_screenshots:
+        description: Commit fresh simulator screenshots to docs/screenshots
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write   # used only when screenshots are committed on request
+    env:
+      BUNDLE_ID: dev.bandcompanion.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: xcodebuild -version && swift --version
+
+      - name: Library tests on macOS
+        run: swift test 2>&1 | tail -n 15
+
+      - name: Build for the simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project BandCompanion.xcodeproj -scheme BandCompanion -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/sim" \
+            CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/sim-build.log" 2>&1 || {
+              echo "---- errors ----"
+              grep -E "error:|error |fatal" -A 4 "$RUNNER_TEMP/sim-build.log" | head -n 220
+              echo "---- end of log ----"
+              tail -n 30 "$RUNNER_TEMP/sim-build.log"
+              exit 1
+            }
+          grep -E "warning:" "$RUNNER_TEMP/sim-build.log" | sort -u | head -n 60 || true
+          tail -n 3 "$RUNNER_TEMP/sim-build.log"
+
+      - name: Open every screen with demo data
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/sim/Build/Products/Debug-iphonesimulator/BandCompanion.app"
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          choice = None
+          for runtime in sorted(devices, reverse=True):
+              if "iOS" not in runtime:
+                  continue
+              phones = [d for d in devices[runtime] if d["name"].startswith("iPhone")]
+              if phones:
+                  pro = [d for d in phones if "Pro" in d["name"] and "Max" not in d["name"]]
+                  choice = (pro or phones)[0]
+                  print(choice["name"], runtime, file=sys.stderr)
+                  break
+          print(choice["udid"])
+          ')
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 --cellularBars 4 || true
+          xcrun simctl install "$UDID" "$APP"
+          mkdir -p screenshots
+          for screen in today trends device diagnostics pairing address; do
+            xcrun simctl launch "$UDID" "$BUNDLE_ID" -demo -screen "$screen"
+            sleep 8
+            if ! xcrun simctl spawn "$UDID" launchctl list | grep -q "$BUNDLE_ID"; then
+              echo "::error::The app was not running after opening the $screen screen"
+              find ~/Library/Logs/DiagnosticReports -name 'BandCompanion*' -exec head -n 120 {} \; || true
+              exit 1
+            fi
+            xcrun simctl io "$UDID" screenshot "screenshots/$screen.png"
+            xcrun simctl terminate "$UDID" "$BUNDLE_ID"
+            sleep 1
+          done
+          ls -l screenshots
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-screenshots
+          path: screenshots
+          if-no-files-found: ignore
+
+      - name: Build for devices, unsigned
+        run: |
+          set -o pipefail
+          xcodebuild -project BandCompanion.xcodeproj -scheme BandCompanion -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/device" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > "$RUNNER_TEMP/device-build.log" 2>&1 || {
+              echo "---- errors ----"
+              grep -E "error:|error |fatal" -A 4 "$RUNNER_TEMP/device-build.log" | head -n 220
+              tail -n 30 "$RUNNER_TEMP/device-build.log"
+              exit 1
+            }
+          tail -n 3 "$RUNNER_TEMP/device-build.log"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/device/Build/Products/Release-iphoneos/BandCompanion.app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry BandCompanion-unsigned.ipa Payload)
+          ls -l "$RUNNER_TEMP/ipa/BandCompanion-unsigned.ipa"
+
+      - name: Keep the unsigned app
+        uses: actions/upload-artifact@v4
+        with:
+          name: BandCompanion-unsigned-ipa
+          path: ${{ runner.temp }}/ipa/BandCompanion-unsigned.ipa
+
+      - name: Commit screenshots
+        if: github.event_name == 'workflow_dispatch' && inputs.update_screenshots
+        run: |
+          set -euo pipefail
+          mkdir -p docs/screenshots
+          for file in screenshots/*.png; do
+            sips -Z 1100 "$file" --out "docs/screenshots/$(basename "$file")" > /dev/null
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots
+          if git diff --cached --quiet; then
+            echo "Screenshots unchanged"
+          else
+            git commit -m "Update simulator screenshots"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi

@@ -33,6 +33,8 @@ final class SimulatedBand: BandTransport, @unchecked Sendable {
         .adding(0x07, string: "1.1.0.74")
         .adding(0x09, string: "ABC123456789")
         .adding(0x0a, string: "CRS-B19 ")
+    /// Whether the band reveals its address to a phone it has not paired with yet.
+    var reportsAddressBeforePairing = false
     /// Commands the band stays silent on, to exercise timeouts. Keyed by `service << 8 | command`.
     var silentCommands = Set<Int>()
     /// Drops this many upcoming replies, then behaves again.
@@ -163,6 +165,12 @@ final class SimulatedBand: BandTransport, @unchecked Sendable {
             send(0x01, 0x0e, TLV().adding(0x02, byte: 1), encrypted: false)
 
         case (0x01, 0x07):
+            if !wasEncrypted {
+                // The question an unpaired phone asks to learn the band's address.
+                guard authenticated, reportsAddressBeforePairing, let value = deviceInfo.bytes(0x05) else { return }
+                send(0x01, 0x07, TLV().adding(0x05, bytes: value), encrypted: false)
+                return
+            }
             send(0x01, 0x07, deviceInfo, encrypted: true)
         case (0x01, 0x08):
             send(0x01, 0x08, TLV().adding(0x01, byte: UInt8(battery)), encrypted: true)
