@@ -63,12 +63,16 @@ struct Stat: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
+                // Three of these share a row, so a long value shrinks instead of wrapping.
                 Text(value)
                     .font(.title2.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(tint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .layoutPriority(1)
                 if let unit {
-                    Text(unit).font(.footnote).foregroundStyle(.secondary)
+                    Text(unit).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             Text(caption).font(.caption).foregroundStyle(.secondary)

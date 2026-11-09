@@ -155,10 +155,13 @@ struct PairingView: View {
             } footer: {
                 Text("iPhones do not tell apps a band's Bluetooth address, and the band needs it once, to pair. On the band, open More, then System or About, and look for the line labelled MAC. Type the twelve characters shown there; the colons are optional.")
             }
+            // Separate sections, so each centred button gets its own tidy row.
             Section {
                 Button("Pair") { model.pair(band, addressText: address) }
                     .frame(maxWidth: .infinity)
                     .disabled(parsed == nil)
+            }
+            Section {
                 Button("Choose a different band", role: .cancel) { model.beginPairing() }
                     .frame(maxWidth: .infinity)
             }

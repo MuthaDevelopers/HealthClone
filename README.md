@@ -14,6 +14,17 @@ Huawei, and it is not a medical device.
 > to need a round or two of fixes. The app has a diagnostics log made for exactly that; see
 > [If something does not work](#if-something-does-not-work).
 
+## What it looks like
+
+These are from the iOS simulator running the app's demo mode, so the numbers are made up.
+
+<p>
+  <img src="docs/screenshots/today.png" width="24%" alt="Daily dashboard with a steps ring, hourly steps and heart rate">
+  <img src="docs/screenshots/trends.png" width="24%" alt="Weekly steps and sleep charts">
+  <img src="docs/screenshots/device.png" width="24%" alt="Band status, battery and settings">
+  <img src="docs/screenshots/pairing.png" width="24%" alt="Choosing a band to pair">
+</p>
+
 ## What it does
 
 | | |
