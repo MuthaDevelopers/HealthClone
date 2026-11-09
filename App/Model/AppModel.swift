@@ -71,6 +71,7 @@ final class AppModel {
     @ObservationIgnored private var settingsTask: Task<Void, Never>?
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var isActive = true
+    @ObservationIgnored private var failedAttempts = 0
     @ObservationIgnored private let calendar = Calendar.current
 
     init() {
@@ -119,6 +120,7 @@ final class AppModel {
 
     func sceneBecameActive() {
         isActive = true
+        failedAttempts = 0
         if case .failed = link { link = .idle }
         connectIfNeeded()
         if link == .ready, let last = state.lastSync, Date().timeIntervalSince(last) > 5 * 60 {
@@ -245,7 +247,12 @@ final class AppModel {
 
     func connectIfNeeded() {
         guard !isDemo, let band = paired, linkTask == nil, session == nil else { return }
-        if case .needsRepair = link { return }
+        // After a failure the next attempt has to be asked for, by the user or by the retry
+        // below; otherwise a band that keeps refusing would be hammered in a loop.
+        switch link {
+        case .needsRepair, .failed: return
+        default: break
+        }
         central.activate()
         linkTask = Task { [weak self] in
             await self?.establishLink(band)
@@ -271,6 +278,7 @@ final class AppModel {
                 link = .needsRepair(describe(error))
             } else {
                 link = .failed(describe(error))
+                retryAfterFailure()
             }
         } catch let failure as BluetoothFailure {
             link = failure == .cancelled ? .idle : .failed(describe(failure))
@@ -280,9 +288,24 @@ final class AppModel {
         }
     }
 
+    /// A handshake that fails once often works a moment later, so try twice more before leaving
+    /// it to the user.
+    private func retryAfterFailure() {
+        failedAttempts += 1
+        guard failedAttempts <= 2, isActive else { return }
+        let delay = UInt64(failedAttempts) * 3_000_000_000
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard let self, case .failed = self.link else { return }
+            self.link = .idle
+            self.connectIfNeeded()
+        }
+    }
+
     private func adopt(_ session: BandSession, _ opened: BandSession.OpenResult) async {
         self.session = session
         link = .ready
+        failedAttempts = 0
         let device = opened.device
         try? await store.updateState { $0.device = device }
         await refreshState()
@@ -305,12 +328,15 @@ final class AppModel {
     }
 
     private func linkDropped() {
+        let wasEstablished = link == .ready
         let old = session
         session = nil
         eventTask?.cancel()
         if let old { Task { await old.close() } }
         if link == .ready || link == .securing { link = .idle }
-        guard isActive, paired != nil else { return }
+        // Only an established link that dropped is picked up again automatically. A failed attempt
+        // is handled where it failed.
+        guard wasEstablished, isActive, paired != nil else { return }
         // Wait for the band to come back; the pending connection costs nothing while it is away.
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -332,6 +358,7 @@ final class AppModel {
     func syncNow() async {
         guard !isDemo else { return }
         if session == nil {
+            failedAttempts = 0
             if case .failed = link { link = .idle }
             connectIfNeeded()   // a sync follows automatically once the link is up
             return
