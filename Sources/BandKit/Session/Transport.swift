@@ -41,6 +41,8 @@ public enum BandError: Error, Equatable, Sendable {
     case unsupportedProtocol(version: Int)
     /// The band wants a newer pairing scheme than the one the Honor Band 4 uses.
     case unsupportedSecurity(scheme: Int)
+    /// The band asks for a handshake variant this app has no constants for.
+    case unsupportedAuthVersion(Int)
     /// The band failed to prove it knows the shared handshake secret.
     case authenticationFailed
     /// First-time pairing needs the band's Bluetooth address and none was supplied.
@@ -69,6 +71,8 @@ extension BandError: LocalizedError {
             return "This band uses link protocol version \(version), which this app does not support."
         case .unsupportedSecurity(let scheme):
             return "This band asks for pairing scheme \(scheme), which this app does not support."
+        case .unsupportedAuthVersion(let version):
+            return "This band asks for handshake version \(version), which this app does not support."
         case .authenticationFailed:
             return "The band did not pass the handshake check."
         case .deviceAddressRequired:

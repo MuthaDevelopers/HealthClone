@@ -186,7 +186,8 @@ final class AppModel {
             pairing = .working(band, "Pairing… If the band asks you to confirm, accept on its screen.")
             let identity = PairingIdentity.generate(deviceAddress: address)
             let session = BandSession(transport: transport, logger: log)
-            let opened = try await session.open(identity: identity, nameHint: band.name)
+            // The identity is brand new, so send its key whatever the band says it remembers.
+            let opened = try await session.open(identity: identity, nameHint: band.name, bondPolicy: .always)
 
             var remembered = identity
             remembered.deviceAddress = opened.deviceAddress ?? address

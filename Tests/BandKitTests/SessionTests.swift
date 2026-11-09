@@ -148,6 +148,33 @@ final class SessionTests: XCTestCase {
         XCTAssertNil(existing.deviceAddress)
     }
 
+    func testFirstPairingSendsTheKeyEvenIfTheBandClaimsToKnowThePhone() async throws {
+        let band = SimulatedBand()
+        band.claimsEveryPhoneIsBonded = true
+        let identity = makeIdentity()
+
+        // Trusting the band's claim leaves the two sides with different keys.
+        await assertThrows(.linkKeyRejected(firstPairing: false)) {
+            try await BandSession(transport: band, timing: fastTiming).open(identity: identity)
+        }
+
+        let insisting = SimulatedBand()
+        insisting.claimsEveryPhoneIsBonded = true
+        let opened = try await BandSession(transport: insisting, timing: fastTiming).open(identity: identity, bondPolicy: .always)
+        XCTAssertEqual(opened.bond, .created)
+        XCTAssertEqual(insisting.knownClients[identity.clientSerial], identity.linkKey)
+        XCTAssertEqual(insisting.requests(service: 0x01, command: 0x0e).count, 1)
+    }
+
+    func testUnknownAuthVersionIsRefusedBeforeAnyGuessing() async {
+        let band = SimulatedBand()
+        band.authVersion = 7
+        await assertThrows(.unsupportedAuthVersion(7)) {
+            try await BandSession(transport: band, timing: fastTiming).open(identity: makeIdentity())
+        }
+        XCTAssertTrue(band.requests(service: 0x01, command: 0x13).isEmpty)
+    }
+
     func testNewerDevicesAreRefusedClearly() async {
         let scheme = SimulatedBand()
         scheme.securityScheme = 4

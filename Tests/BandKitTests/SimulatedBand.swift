@@ -33,6 +33,8 @@ final class SimulatedBand: BandTransport, @unchecked Sendable {
         .adding(0x07, string: "1.1.0.74")
         .adding(0x09, string: "ABC123456789")
         .adding(0x0a, string: "CRS-B19 ")
+    /// Makes the band claim it already knows every phone, as some do once paired with anything.
+    var claimsEveryPhoneIsBonded = false
     /// Whether the band reveals its address to a phone it has not paired with yet.
     var reportsAddressBeforePairing = false
     /// Commands the band stays silent on, to exercise timeouts. Keyed by `service << 8 | command`.
@@ -149,7 +151,7 @@ final class SimulatedBand: BandTransport, @unchecked Sendable {
             guard authenticated, let serial = body.string(0x03) else { return }
             currentSerial = serial
             send(0x01, 0x0f, TLV()
-                .adding(0x01, byte: knownClients[serial] != nil ? 1 : 0)
+                .adding(0x01, byte: knownClients[serial] != nil || claimsEveryPhoneIsBonded ? 1 : 0)
                 .adding(0x02, byte: 0)
                 .adding(0x04, byte: 2)
                 .adding(0x05, uint16: sliceSize)

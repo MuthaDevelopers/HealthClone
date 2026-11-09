@@ -27,6 +27,15 @@ public actor BandSession {
         }
     }
 
+    public enum BondPolicy: Equatable, Sendable {
+        /// Send the link key only if the band says it does not know this phone. Right for
+        /// reconnecting with an identity the band has seen before.
+        case ifNeeded
+        /// Always send the link key. Right for a first pairing, where the identity is brand new
+        /// and whatever the band claims to remember cannot be this phone's key.
+        case always
+    }
+
     public enum BondOutcome: Equatable, Sendable {
         /// The band already knew this phone.
         case existing
@@ -287,8 +296,11 @@ public actor BandSession {
     /// `BandError.deviceAddressRequired` and the caller should ask the user. The band may also ask
     /// its wearer to confirm the pairing on its screen.
     ///
-    /// - Parameter nameHint: the band's advertised name, used to sanity-check a reported address.
-    public func open(identity: PairingIdentity, nameHint: String? = nil) async throws -> OpenResult {
+    /// - Parameters:
+    ///   - nameHint: the band's advertised name, used to sanity-check a reported address.
+    ///   - bondPolicy: whether to send the link key even if the band claims to know this phone.
+    public func open(identity: PairingIdentity, nameHint: String? = nil,
+                     bondPolicy: BondPolicy = .ifNeeded) async throws -> OpenResult {
         start()
         linkKey = nil
 
@@ -297,6 +309,7 @@ public actor BandSession {
             + "auth v\(link.authVersion), scheme \(link.securityScheme)")
         guard link.protocolVersion == 2 else { throw BandError.unsupportedProtocol(version: link.protocolVersion) }
         guard link.securityScheme == 0 else { throw BandError.unsupportedSecurity(scheme: link.securityScheme) }
+        guard (1...4).contains(link.authVersion) else { throw BandError.unsupportedAuthVersion(link.authVersion) }
         sliceSize = link.sliceSize
         linkMTU = link.linkMTU
 
@@ -309,7 +322,7 @@ public actor BandSession {
 
         let outcome: BondOutcome
         var bondedAddress: BandAddress?
-        if parameters.bonded {
+        if parameters.bonded && bondPolicy == .ifNeeded {
             outcome = .existing
             logger.log(.info, "Band recognises this phone")
         } else {
@@ -318,7 +331,9 @@ public actor BandSession {
                 address = await reportedAddress(nameHint: nameHint)
             }
             guard let address else { throw BandError.deviceAddressRequired }
-            logger.log(.info, "Band does not know this phone; sending pairing request")
+            logger.log(.info, parameters.bonded
+                ? "Band claims to know this phone; sending the link key anyway"
+                : "Band does not know this phone; sending pairing request")
             try await bond(identity, address: address, authVersion: link.authVersion)
             outcome = .created
             bondedAddress = address
