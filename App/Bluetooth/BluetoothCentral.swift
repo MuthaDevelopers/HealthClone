@@ -139,13 +139,29 @@ final class BluetoothCentral: NSObject, @unchecked Sendable {
     /// - Parameter timeout: nil waits indefinitely, which is how a known band is picked up again
     ///   whenever it next comes into range.
     func connect(_ identifier: UUID, timeout: TimeInterval?) async throws -> PeripheralTransport {
-        try await withTaskCancellationHandler {
+        // Cancellation can arrive before the attempt has been set up, so it is recorded as well as
+        // acted on. Both blocks run on the same serial queue, which makes the flag safe.
+        let cancellation = Cancellation()
+        return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                queue.async { self.begin(identifier, timeout: timeout, continuation: continuation) }
+                queue.async {
+                    if cancellation.requested {
+                        continuation.resume(throwing: BluetoothFailure.cancelled)
+                    } else {
+                        self.begin(identifier, timeout: timeout, continuation: continuation)
+                    }
+                }
             }
         } onCancel: {
-            queue.async { self.failAttempt(.cancelled, dropConnection: true) }
+            queue.async {
+                cancellation.requested = true
+                self.failAttempt(.cancelled, dropConnection: true)
+            }
         }
+    }
+
+    private final class Cancellation: @unchecked Sendable {
+        var requested = false
     }
 
     func disconnect() {

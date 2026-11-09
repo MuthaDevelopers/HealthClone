@@ -41,11 +41,11 @@ struct RootView: View {
 }
 
 struct MainTabs: View {
-    enum Tab: String {
+    private enum Screen {
         case today, trends, device
     }
 
-    @State private var selection: Tab = {
+    @State private var selection: Screen = {
         switch DemoData.requestedScreen {
         case "trends": return .trends
         case "device", "diagnostics": return .device
@@ -57,13 +57,13 @@ struct MainTabs: View {
         TabView(selection: $selection) {
             TodayView()
                 .tabItem { Label("Today", systemImage: "figure.walk") }
-                .tag(Tab.today)
+                .tag(Screen.today)
             TrendsView()
                 .tabItem { Label("Trends", systemImage: "chart.bar.fill") }
-                .tag(Tab.trends)
+                .tag(Screen.trends)
             DeviceView()
                 .tabItem { Label("Band", systemImage: "applewatch.side.right") }
-                .tag(Tab.device)
+                .tag(Screen.device)
         }
     }
 }
