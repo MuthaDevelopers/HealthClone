@@ -233,6 +233,7 @@ final class AppModel {
         Preferences.pairedBand = nil
         Preferences.appliedSettings = nil
         paired = nil
+        pairing = .scanning
         link = .idle
         syncNote = nil
         settingsIssues = []

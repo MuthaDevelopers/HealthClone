@@ -79,7 +79,9 @@ jobs:
           for screen in today trends device diagnostics pairing address; do
             xcrun simctl launch "$UDID" "$BUNDLE_ID" -demo -screen "$screen"
             sleep 8
-            if ! xcrun simctl spawn "$UDID" launchctl list | grep -q "$BUNDLE_ID"; then
+            # Captured first: piping straight into "grep -q" can fail the pipeline when grep exits early.
+            running=$(xcrun simctl spawn "$UDID" launchctl list || true)
+            if ! grep -q "$BUNDLE_ID" <<< "$running"; then
               echo "::error::The app was not running after opening the $screen screen"
               find ~/Library/Logs/DiagnosticReports -name 'BandCompanion*' -exec head -n 120 {} \; || true
               exit 1
